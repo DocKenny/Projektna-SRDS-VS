@@ -20,7 +20,6 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "usb_host.h"
-#include "FreeRTOS.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -97,6 +96,14 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  BaseType_t xReturned;
+  TaskHandle_t xHandle = NULL;
+	xReturned = xTaskCreate(vTaskFunction, // Function that implements the task.
+			"Task",          // Text name for the task.
+			1000,      // Stack size in words, not bytes.
+			(void*) 1,    // Parameter passed into the task.
+			1,         // Priority at which the task is created.
+			&xHandle);      // Used to pass out the created task's handle.
 
   /* USER CODE END Init */
 
@@ -185,7 +192,7 @@ void SystemClock_Config(void)
   * in the RCC_OscInitTypeDef structure.
   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
