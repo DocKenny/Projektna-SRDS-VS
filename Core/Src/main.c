@@ -1,21 +1,3 @@
-/* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
-/* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
@@ -58,6 +40,14 @@ const osThreadAttr_t defaultTask_attributes = {
 };
 /* USER CODE BEGIN PV */
 
+/* Task Handles */
+osThreadId dataReceptionTaskHandle;
+osThreadId warningLogicTaskHandle;
+osThreadId audioSignalTaskHandle;
+osThreadId displayUpdateTaskHandle;
+osThreadId tofSensorTaskHandle;
+osThreadId communicationTaskHandle;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,14 +58,65 @@ static void MX_I2C1_Init(void);
 static void MX_I2S2_Init(void);
 static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
-void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-
+void DataReceptionTask(void *argument);
+void WarningLogicTask(void *argument);
+void AudioSignalTask(void *argument);
+void DisplayUpdateTask(void *argument);
+void ToFSensorTask(void *argument);
+void CommunicationTask(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void DataReceptionTask(void *argument) {
+    for (;;) {
+        // Placeholder: Read data from UART or other communication interface
+        // HAL_UART_Receive(&huart, buffer, buffer_size, HAL_MAX_DELAY);
+        osDelay(10); // Simulate task workload
+    }
+}
+
+void WarningLogicTask(void *argument) {
+    for (;;) {
+        // Placeholder: Analyze position data and make decisions
+        // if (subject_is_close) { trigger_warning(); }
+        osDelay(20); // Simulate task workload
+    }
+}
+
+void AudioSignalTask(void *argument) {
+    for (;;) {
+        // Placeholder: Activate audio signals
+        // if (warning_active) { HAL_GPIO_WritePin(SPEAKER_PIN, GPIO_PIN_SET); }
+        osDelay(50); // Simulate task workload
+    }
+}
+
+void DisplayUpdateTask(void *argument) {
+    for (;;) {
+        // Placeholder: Update display
+        // update_display(subject_position);
+        osDelay(100); // Simulate task workload
+    }
+}
+
+void ToFSensorTask(void *argument) {
+    for (;;) {
+        // Placeholder: Read data from ToF sensor
+        // HAL_I2C_Mem_Read(&hi2c, TOF_SENSOR_ADDRESS, REGISTER, I2C_MEMADD_SIZE, buffer, buffer_size, HAL_MAX_DELAY);
+        osDelay(30); // Simulate task workload
+    }
+}
+
+void CommunicationTask(void *argument) {
+    for (;;) {
+        // Placeholder: Send data to ESP32 or log results
+        // HAL_UART_Transmit(&huart, message, message_size, HAL_MAX_DELAY);
+        osDelay(50); // Simulate task workload
+    }
+}
 
 /* USER CODE END 0 */
 
