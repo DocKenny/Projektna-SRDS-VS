@@ -1,0 +1,18 @@
+# STM32CubeIDE-specific files
+.cproject
+.mxproject
+.project
+.settings/
+
+# Build directories
+Debug/
+Release/
+
+# Other temporary or build files
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.d
+*.log
