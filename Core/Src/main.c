@@ -70,6 +70,52 @@ void CommunicationTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* FreeRTOS Task Priorities */
+#define PRIORITY_DATA_RECEPTION    5 // High priority: Critical for receiving detection data
+#define PRIORITY_WARNING_LOGIC     4 // Important: Decision-making and alerts
+#define PRIORITY_AUDIO_SIGNAL      3 // Medium: Needs timely response to warnings
+#define PRIORITY_DISPLAY_UPDATE    2 // Low: Visual updates can tolerate some delay
+#define PRIORITY_TOF_SENSOR        4 // Important: Accurate and timely distance measurement
+#define PRIORITY_COMMUNICATION     2 // Low: Can operate asynchronously
+
+/* FreeRTOS Stack Sizes */
+#define STACK_SIZE_MINIMAL 128
+
+void CreateTasks(void) {
+    BaseType_t taskCreationStatus;
+
+    taskCreationStatus = xTaskCreate(DataReceptionTask, "DataReception", STACK_SIZE_MINIMAL, NULL, PRIORITY_DATA_RECEPTION, NULL);
+    if (taskCreationStatus != pdPASS) {
+        // Handle error
+    }
+
+    taskCreationStatus = xTaskCreate(WarningLogicTask, "WarningLogic", STACK_SIZE_MINIMAL, NULL, PRIORITY_WARNING_LOGIC, NULL);
+    if (taskCreationStatus != pdPASS) {
+        // Handle error
+    }
+
+    taskCreationStatus = xTaskCreate(AudioSignalTask, "AudioSignal", STACK_SIZE_MINIMAL, NULL, PRIORITY_AUDIO_SIGNAL, NULL);
+    if (taskCreationStatus != pdPASS) {
+        // Handle error
+    }
+
+    taskCreationStatus = xTaskCreate(DisplayUpdateTask, "DisplayUpdate", STACK_SIZE_MINIMAL, NULL, PRIORITY_DISPLAY_UPDATE, NULL);
+    if (taskCreationStatus != pdPASS) {
+        // Handle error
+    }
+
+    taskCreationStatus = xTaskCreate(ToFSensorTask, "ToFSensor", STACK_SIZE_MINIMAL, NULL, PRIORITY_TOF_SENSOR, NULL);
+    if (taskCreationStatus != pdPASS) {
+        // Handle error
+    }
+
+    taskCreationStatus = xTaskCreate(CommunicationTask, "Communication", STACK_SIZE_MINIMAL, NULL, PRIORITY_COMMUNICATION, NULL);
+    if (taskCreationStatus != pdPASS) {
+        // Handle error
+    }
+}
+
 void DataReceptionTask(void *argument) {
     for (;;) {
         // Placeholder: Read data from UART or other communication interface
