@@ -181,13 +181,16 @@ void ToFSensorTask(void *argument) {
 }
 
 void CommunicationTask(void *argument) {
+    uint8_t rxBuffer[100];
+    uint8_t txBuffer[] = "Acknowledged!";
     for (;;) {
-        // Placeholder: Send data to ESP32 or log results
-        // HAL_UART_Transmit(&huart, message, message_size, HAL_MAX_DELAY);
-        osDelay(50); // Simulate task workload
+        if (HAL_UART_Receive(&huart1, rxBuffer, sizeof(rxBuffer), HAL_MAX_DELAY) == HAL_OK) {
+            // Process received data
+            HAL_UART_Transmit(&huart1, txBuffer, sizeof(txBuffer) - 1, HAL_MAX_DELAY);
+        }
+        osDelay(10); // Allow task switching
     }
 }
-
 /* USER CODE END 0 */
 
 /**
