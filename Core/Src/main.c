@@ -180,7 +180,7 @@ void ToFSensorTask(void *argument) {
 }
 
 void CommunicationTask(void *argument) {
-    uint8_t rxBuffer[100];
+    //uint8_t rxBuffer[100];
     uint8_t txBuffer[] = "Acknowledged!";
     for (;;) {
     	HAL_UART_Transmit(&huart1, txBuffer, sizeof(txBuffer) - 1, HAL_MAX_DELAY);
