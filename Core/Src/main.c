@@ -194,11 +194,6 @@ void createTasks(void) {
         // Handle error
     }
 
-    taskCreationStatus = xTaskCreate(ToFSensorTask, "ToFSensor", STACK_SIZE_MINIMAL, NULL, PRIORITY_TOF_SENSOR, NULL);
-    if (taskCreationStatus != pdPASS) {
-        // Handle error
-    }
-
     taskCreationStatus = xTaskCreate(CommunicationTask, "Communication", STACK_SIZE_MINIMAL, NULL, PRIORITY_COMMUNICATION, NULL);
     if (taskCreationStatus != pdPASS) {
         // Handle error
@@ -222,7 +217,6 @@ void createTasks(void) {
 
 void DataReceptionTask(void *argument) {
     DetectionData_t detectionData;
-
     for (;;) {
         if (CDC_newDataReceived) {
             // Parse the received data
@@ -279,14 +273,6 @@ void AudioSignalTask(void *argument) {
         // Placeholder: Activate audio signals
         // if (warning_active) { HAL_GPIO_WritePin(SPEAKER_PIN, GPIO_PIN_SET); }
         osDelay(50); // Simulate task workload
-    }
-}
-
-void ToFSensorTask(void *argument) {
-    for (;;) {
-        // Placeholder: Read data from ToF sensor
-        // HAL_I2C_Mem_Read(&hi2c, TOF_SENSOR_ADDRESS, REGISTER, I2C_MEMADD_SIZE, buffer, buffer_size, HAL_MAX_DELAY);
-        osDelay(30); // Simulate task workload
     }
 }
 
