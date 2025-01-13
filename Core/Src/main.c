@@ -19,19 +19,28 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "usb_device.h"
+
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "usbd_cdc_if.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct {
+    uint8_t xPos;
+    uint8_t yPos;
+    char label[16]; // Label for "cyclist" or "motorcyclist"
+} DetectionData_t;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define QUEUE_LENGTH 10
+#define QUEUE_ITEM_SIZE sizeof(DetectionData_t)
 
 /* USER CODE END PD */
 
@@ -48,8 +57,6 @@ SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
-
-HCD_HandleTypeDef hhcd_USB_OTG_FS;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -68,6 +75,11 @@ osThreadId displayUpdateTaskHandle;
 osThreadId tofSensorTaskHandle;
 osThreadId communicationTaskHandle;
 
+// Detection data queue
+osMessageQueueId_t detectionDataQueueHandle;
+uint8_t CDC_receivedBuffer[BUFFER_SIZE];
+volatile uint8_t CDC_newDataReceived = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -79,7 +91,6 @@ static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
-static void MX_USB_OTG_FS_HCD_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
@@ -123,11 +134,6 @@ void createTasks(void) {
         // Handle error
     }
 
-    taskCreationStatus = xTaskCreate(DisplayUpdateTask, "DisplayUpdate", STACK_SIZE_MINIMAL, NULL, PRIORITY_DISPLAY_UPDATE, NULL);
-    if (taskCreationStatus != pdPASS) {
-        // Handle error
-    }
-
     taskCreationStatus = xTaskCreate(ToFSensorTask, "ToFSensor", STACK_SIZE_MINIMAL, NULL, PRIORITY_TOF_SENSOR, NULL);
     if (taskCreationStatus != pdPASS) {
         // Handle error
@@ -140,17 +146,55 @@ void createTasks(void) {
 }
 
 void DataReceptionTask(void *argument) {
+    DetectionData_t detectionData;
+
     for (;;) {
-        // Placeholder: Read data from UART or other communication interface
-        // HAL_UART_Receive(&huart, buffer, buffer_size, HAL_MAX_DELAY);
-        osDelay(10); // Simulate task workload
+        if (CDC_newDataReceived) {
+            // Parse the received data
+            if (sscanf((char *)CDC_receivedBuffer, "%hhu,%hhu,%15s",
+                       &detectionData.xPos, &detectionData.yPos, detectionData.label) == 3) {
+                // Send data to the queue
+                if (xQueueSend(detectionDataQueue, &detectionData, portMAX_DELAY) != pdPASS) {
+                    // Handle queue send failure
+                }
+            } else {
+                // Handle invalid data
+                HandleInvalidData(CDC_receivedBuffer);
+            }
+
+            // Clear the buffer and reset the flag
+            memset(CDC_receivedBuffer, 0, sizeof(CDC_receivedBuffer));
+            CDC_newDataReceived = 0;
+        }
+
+        osDelay(10); // Prevent CPU hogging
     }
 }
+
+void DataProcessingTask(void *argument) {
+    DetectionData_t receivedData;
+
+    for (;;) {
+        // Wait for data from the queue
+        if (xQueueReceive(detectionDataQueue, &receivedData, portMAX_DELAY) == pdPASS) {
+            // Process the received data
+            if (strcmp(receivedData.label, "cyclist") == 0) {
+                ProcessCyclistData(receivedData.xPos, receivedData.yPos);
+            } else if (strcmp(receivedData.label, "motorcyclist") == 0) {
+                ProcessMotorcyclistData(receivedData.xPos, receivedData.yPos);
+            } else {
+                // Handle unknown label
+                HandleInvalidLabel(receivedData.label);
+            }
+        }
+    }
+}
+
 
 void WarningLogicTask(void *argument) {
     for (;;) {
         // Placeholder: Analyze position data and make decisions
-        // if (subject_is_close) { trigger_warning(); }
+        // if (subject_is_close && subject_is_detected) { trigger_warning(); }
         osDelay(20); // Simulate task workload
     }
 }
@@ -163,14 +207,6 @@ void AudioSignalTask(void *argument) {
     }
 }
 
-void DisplayUpdateTask(void *argument) {
-    for (;;) {
-        // Placeholder: Update display
-        // update_display(subject_position);
-        osDelay(100); // Simulate task workload
-    }
-}
-
 void ToFSensorTask(void *argument) {
     for (;;) {
         // Placeholder: Read data from ToF sensor
@@ -180,9 +216,12 @@ void ToFSensorTask(void *argument) {
 }
 
 void CommunicationTask(void *argument) {
-    //uint8_t rxBuffer[100];
+    uint8_t tofBuffer[100];
     uint8_t txBuffer[] = "Acknowledged!";
     for (;;) {
+
+
+
     	HAL_UART_Transmit(&huart1, txBuffer, sizeof(txBuffer) - 1, HAL_MAX_DELAY);
         osDelay(10); // Allow task switching
     }
@@ -227,7 +266,6 @@ int main(void)
   MX_SPI1_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
-  MX_USB_OTG_FS_HCD_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -254,8 +292,6 @@ int main(void)
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-
-
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -303,9 +339,9 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 192;
+  RCC_OscInitStruct.PLL.PLLN = 168;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
-  RCC_OscInitStruct.PLL.PLLQ = 8;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -317,10 +353,10 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -519,37 +555,6 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
-  * @brief USB_OTG_FS Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USB_OTG_FS_HCD_Init(void)
-{
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
-
-  /* USER CODE END USB_OTG_FS_Init 0 */
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
-
-  /* USER CODE END USB_OTG_FS_Init 1 */
-  hhcd_USB_OTG_FS.Instance = USB_OTG_FS;
-  hhcd_USB_OTG_FS.Init.Host_channels = 8;
-  hhcd_USB_OTG_FS.Init.speed = HCD_SPEED_FULL;
-  hhcd_USB_OTG_FS.Init.dma_enable = DISABLE;
-  hhcd_USB_OTG_FS.Init.phy_itface = HCD_PHY_EMBEDDED;
-  hhcd_USB_OTG_FS.Init.Sof_enable = DISABLE;
-  if (HAL_HCD_Init(&hhcd_USB_OTG_FS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
-
-  /* USER CODE END USB_OTG_FS_Init 2 */
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -650,6 +655,8 @@ static void MX_GPIO_Init(void)
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void *argument)
 {
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
