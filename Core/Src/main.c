@@ -21,7 +21,6 @@
 #include "cmsis_os.h"
 #include "usb_device.h"
 
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "usbd_cdc_if.h"
@@ -41,7 +40,12 @@ typedef struct {
 /* USER CODE BEGIN PD */
 #define QUEUE_LENGTH 10
 #define QUEUE_ITEM_SIZE sizeof(DetectionData_t)
+#define UART_QUEUE_LENGTH 10
+#define RX_BUFFER_SIZE 16
 
+#define LED_CYCLIST GPIO_PIN_14
+#define LED_MOTORCYCLIST GPIO_PIN_12
+#define TOF_BUFFER_SIZE 16
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -76,9 +80,13 @@ osThreadId tofSensorTaskHandle;
 osThreadId communicationTaskHandle;
 
 // Detection data queue
-osMessageQueueId_t detectionDataQueueHandle;
+QueueHandle_t detectionDataQueue;
+QueueHandle_t uartQueue;
+
 uint8_t CDC_receivedBuffer[BUFFER_SIZE];
 volatile uint8_t CDC_newDataReceived = 0;
+
+static uint8_t tof_receivedBuffer[TOF_BUFFER_SIZE];
 
 /* USER CODE END PV */
 
@@ -112,9 +120,61 @@ void CommunicationTask(void *argument);
 #define PRIORITY_DISPLAY_UPDATE    2 // Low: Visual updates can tolerate some delay
 #define PRIORITY_TOF_SENSOR        4 // Important: Accurate and timely distance measurement
 #define PRIORITY_COMMUNICATION     2 // Low: Can operate asynchronously
+#define PRIORITY_DATA_PROCESSING   4 // Important: Data processing and decision-making
 
 /* FreeRTOS Stack Sizes */
 #define STACK_SIZE_MINIMAL 128
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART2) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+        // Send data to the queue (non-blocking in ISR)
+        xQueueSendFromISR(uartQueue, tof_receivedBuffer, &xHigherPriorityTaskWoken);
+
+        // Reinitialize UART to receive more data
+        if (HAL_UART_Receive_IT(&huart2, tof_receivedBuffer, sizeof(tof_receivedBuffer)) != HAL_OK) {
+            Error_Handler();
+        }
+
+        // Yield to a higher-priority task if necessary
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
+}
+
+
+
+void HandleUARTError(HAL_StatusTypeDef status) {
+    switch (status) {
+        case HAL_ERROR:
+            printf("UART Error occurred\n");
+            break;
+        case HAL_BUSY:
+            printf("UART Busy\n");
+            break;
+        case HAL_TIMEOUT:
+            printf("UART Timeout\n");
+            break;
+        default:
+            printf("Unknown UART Error\n");
+            break;
+    }
+}
+
+void ProcessToFData(uint8_t *data, uint16_t length) {
+    // Example: Parse and log received ToF sensor data
+    uint16_t distance = 0;
+
+    if (length >= 2) { // Assuming distance data is 2 bytes
+        distance = (data[0] << 8) | data[1]; // Combine MSB and LSB
+        printf("ToF Distance: %u mm\n", distance);
+    } else {
+        printf("Invalid ToF Data\n");
+    }
+
+    // Additional processing can be added here
+}
+
 
 void createTasks(void) {
     BaseType_t taskCreationStatus;
@@ -143,6 +203,21 @@ void createTasks(void) {
     if (taskCreationStatus != pdPASS) {
         // Handle error
     }
+
+    taskCreationStatus = xTaskCreate(DataProcessingTask, "DataProcessing", STACK_SIZE_MINIMAL, NULL, PRIORITY_DATA_PROCESSING, NULL);
+	if (taskCreationStatus != pdPASS) {
+		// Handle error
+	}
+
+	detectionDataQueue = xQueueCreate(QUEUE_LENGTH, QUEUE_ITEM_SIZE);
+	if (detectionDataQueue == NULL) {
+		// Handle error
+	}
+
+	uartQueue = xQueueCreate(UART_QUEUE_LENGTH, sizeof(uint8_t));
+	if (uartQueue == NULL) {
+		// Handle error
+	}
 }
 
 void DataReceptionTask(void *argument) {
@@ -179,9 +254,9 @@ void DataProcessingTask(void *argument) {
         if (xQueueReceive(detectionDataQueue, &receivedData, portMAX_DELAY) == pdPASS) {
             // Process the received data
             if (strcmp(receivedData.label, "cyclist") == 0) {
-                ProcessCyclistData(receivedData.xPos, receivedData.yPos);
+                HAL_GPIO_TogglePin(GPIOD, LED_CYCLIST);
             } else if (strcmp(receivedData.label, "motorcyclist") == 0) {
-                ProcessMotorcyclistData(receivedData.xPos, receivedData.yPos);
+                HAL_GPIO_TogglePin(GPIOD, LED_MOTORCYCLIST);
             } else {
                 // Handle unknown label
                 HandleInvalidLabel(receivedData.label);
@@ -216,14 +291,12 @@ void ToFSensorTask(void *argument) {
 }
 
 void CommunicationTask(void *argument) {
-    uint8_t tofBuffer[100];
-    uint8_t txBuffer[] = "Acknowledged!";
     for (;;) {
-
-
-
-    	HAL_UART_Transmit(&huart1, txBuffer, sizeof(txBuffer) - 1, HAL_MAX_DELAY);
-        osDelay(10); // Allow task switching
+        // Wait for data from the queue
+        if (xQueueReceive(uartQueue, tof_receivedBuffer, portMAX_DELAY) == pdPASS) {
+            // Process the received data
+            ProcessToFData(tof_receivedBuffer, sizeof(tof_receivedBuffer));
+        }
     }
 }
 /* USER CODE END 0 */
@@ -549,7 +622,10 @@ static void MX_USART2_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
-
+  if (HAL_UART_Receive_IT(&huart2, tof_receivedBuffer, sizeof(tof_receivedBuffer)) != HAL_OK) {
+          // Handle error
+          Error_Handler();
+      }
   /* USER CODE END USART2_Init 2 */
 
 }
