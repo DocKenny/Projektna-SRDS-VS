@@ -262,10 +262,15 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
 	if (*Len <= BUFFER_SIZE) {
-		        memcpy(CDC_receivedBuffer, Buf, *Len);  // Copy received data to shared buffer
-		        CDC_receivedBuffer[*Len] = '\0';
-		        CDC_newDataReceived = 1;                // Set the flag
-		   }
+	        memcpy(CDC_receivedBuffer, Buf, *Len);  // Copy received data
+	        CDC_receivedBuffer[*Len] = '\0';
+
+	        // Signal data reception
+	        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	        xSemaphoreGiveFromISR(receiveSemaphore, &xHigherPriorityTaskWoken);
+
+	        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	    }
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   return (USBD_OK);
   /* USER CODE END 6 */
@@ -321,7 +326,7 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
 uint8_t* getReceivedData(void) {
-	return receivedBuffer;
+	return CDC_receivedBuffer;
 }
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

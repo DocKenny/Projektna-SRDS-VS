@@ -24,6 +24,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "usbd_cdc_if.h"
+#include "queue.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -80,13 +81,14 @@ osThreadId tofSensorTaskHandle;
 osThreadId communicationTaskHandle;
 
 // Detection data queue
-QueueHandle_t detectionDataQueue;
-QueueHandle_t uartQueue;
+xQueueHandle detectionDataQueue;
+xQueueHandle uartQueue;
 
 uint8_t CDC_receivedBuffer[BUFFER_SIZE];
-volatile uint8_t CDC_newDataReceived = 0;
 
 static uint8_t tof_receivedBuffer[TOF_BUFFER_SIZE];
+
+SemaphoreHandle_t receiveSemaphore;
 
 /* USER CODE END PV */
 
@@ -108,6 +110,7 @@ void AudioSignalTask(void *argument);
 void DisplayUpdateTask(void *argument);
 void ToFSensorTask(void *argument);
 void CommunicationTask(void *argument);
+void DataProcessingTask(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -204,7 +207,7 @@ void createTasks(void) {
 		// Handle error
 	}
 
-	detectionDataQueue = xQueueCreate(QUEUE_LENGTH, QUEUE_ITEM_SIZE);
+	detectionDataQueue = xQueueCreate( 10, sizeof( DetectionData_t ) );
 	if (detectionDataQueue == NULL) {
 		// Handle error
 	}
@@ -213,38 +216,55 @@ void createTasks(void) {
 	if (uartQueue == NULL) {
 		// Handle error
 	}
+
+	receiveSemaphore = xSemaphoreCreateBinary();
+	if (receiveSemaphore == NULL) {
+		// Handle error
+	}
+}
+
+void HandleInvalidData(uint8_t *data) {
+	// Placeholder: Log invalid data
+
+	if (CDC_Transmit_FS(data, sizeof(data) - 1) != USBD_OK) {
+
+	}
 }
 
 void DataReceptionTask(void *argument) {
     DetectionData_t detectionData;
+
     for (;;) {
-        if (CDC_newDataReceived) {
+        // Wait for the semaphore, signaling new data reception
+        if (xSemaphoreTake(receiveSemaphore, portMAX_DELAY) == pdTRUE) {
             // Parse the received data
-            if (sscanf((char *)CDC_receivedBuffer, "%hhu,%hhu,%15s",
+            if (sscanf((char *)CDC_receivedBuffer, "%hhu,%hhu,%49s",
                        &detectionData.xPos, &detectionData.yPos, detectionData.label) == 3) {
-                // Send data to the queue
+                // Send parsed data to the queue
                 if (xQueueSend(detectionDataQueue, &detectionData, portMAX_DELAY) != pdPASS) {
-                    // Handle queue send failure
+                    // Handle queue send failure (e.g., log an error)
                 }
             } else {
-                // Handle invalid data
+                // Handle invalid data (optional)
                 HandleInvalidData(CDC_receivedBuffer);
             }
 
-            // Clear the buffer and reset the flag
+            // Clear the buffer after processing
             memset(CDC_receivedBuffer, 0, sizeof(CDC_receivedBuffer));
-            CDC_newDataReceived = 0;
         }
 
-        osDelay(10); // Prevent CPU hogging
+        // Optional: Delay to prevent CPU hogging
+        osDelay(10);
     }
 }
+
 
 void DataProcessingTask(void *argument) {
     DetectionData_t receivedData;
 
     for (;;) {
         // Wait for data from the queue
+
         if (xQueueReceive(detectionDataQueue, &receivedData, portMAX_DELAY) == pdPASS) {
             // Process the received data
             if (strcmp(receivedData.label, "cyclist") == 0) {
@@ -253,7 +273,7 @@ void DataProcessingTask(void *argument) {
                 HAL_GPIO_TogglePin(GPIOD, LED_MOTORCYCLIST);
             } else {
                 // Handle unknown label
-                HandleInvalidLabel(receivedData.label);
+                //HandleInvalidLabel(receivedData.label);
             }
         }
     }

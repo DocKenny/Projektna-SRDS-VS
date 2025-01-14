@@ -30,7 +30,8 @@
 #include "usbd_cdc.h"
 
 /* USER CODE BEGIN INCLUDE */
-
+#include "FreeRTOS.h"
+#include "semphr.h"
 /* USER CODE END INCLUDE */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -51,7 +52,7 @@
 #define APP_RX_DATA_SIZE  2048
 #define APP_TX_DATA_SIZE  2048
 /* USER CODE BEGIN EXPORTED_DEFINES */
-#define BUFFER_SIZE 64
+#define BUFFER_SIZE 128
 /* USER CODE END EXPORTED_DEFINES */
 
 /**
@@ -93,7 +94,7 @@
 extern USBD_CDC_ItfTypeDef USBD_Interface_fops_FS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
-extern volatile uint8_t CDC_newDataReceived;
+extern SemaphoreHandle_t receiveSemaphore;
 
 extern uint8_t CDC_receivedBuffer[BUFFER_SIZE];
 /* USER CODE END EXPORTED_VARIABLES */

@@ -38,7 +38,7 @@ def send_data_via_serial(port, baudrate, interval):
 if __name__ == "__main__":
     # Define the serial port parameters
     SERIAL_PORT = "COM3"  # Replace with your serial port
-    BAUD_RATE = 9600      # Standard baud rate
+    BAUD_RATE = 115200      # Standard baud rate
     SEND_INTERVAL = 1     # Time interval in seconds
 
     send_data_via_serial(SERIAL_PORT, BAUD_RATE, SEND_INTERVAL)
