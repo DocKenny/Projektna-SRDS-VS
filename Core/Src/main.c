@@ -19,20 +19,34 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "usbd_cdc_if.h"
+#include "queue.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct {
+    uint8_t xPos;
+    uint8_t yPos;
+    char label[16]; // Label for "cyclist" or "motorcyclist"
+} DetectionData_t;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define QUEUE_LENGTH 10
+#define QUEUE_ITEM_SIZE sizeof(DetectionData_t)
+#define UART_QUEUE_LENGTH 10
+#define RX_BUFFER_SIZE 16
 
+#define LED_CYCLIST GPIO_PIN_14
+#define LED_MOTORCYCLIST GPIO_PIN_12
+#define TOF_BUFFER_SIZE 16
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,8 +62,6 @@ SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
-
-HCD_HandleTypeDef hhcd_USB_OTG_FS;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -68,6 +80,16 @@ osThreadId displayUpdateTaskHandle;
 osThreadId tofSensorTaskHandle;
 osThreadId communicationTaskHandle;
 
+// Detection data queue
+xQueueHandle detectionDataQueue;
+xQueueHandle uartQueue;
+
+uint8_t CDC_receivedBuffer[BUFFER_SIZE];
+
+static uint8_t tof_receivedBuffer[TOF_BUFFER_SIZE];
+
+SemaphoreHandle_t receiveSemaphore;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -79,7 +101,6 @@ static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
-static void MX_USB_OTG_FS_HCD_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
@@ -89,6 +110,7 @@ void AudioSignalTask(void *argument);
 void DisplayUpdateTask(void *argument);
 void ToFSensorTask(void *argument);
 void CommunicationTask(void *argument);
+void DataProcessingTask(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -101,9 +123,61 @@ void CommunicationTask(void *argument);
 #define PRIORITY_DISPLAY_UPDATE    2 // Low: Visual updates can tolerate some delay
 #define PRIORITY_TOF_SENSOR        4 // Important: Accurate and timely distance measurement
 #define PRIORITY_COMMUNICATION     2 // Low: Can operate asynchronously
+#define PRIORITY_DATA_PROCESSING   4 // Important: Data processing and decision-making
 
 /* FreeRTOS Stack Sizes */
 #define STACK_SIZE_MINIMAL 128
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART2) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+        // Send data to the queue (non-blocking in ISR)
+        xQueueSendFromISR(uartQueue, tof_receivedBuffer, &xHigherPriorityTaskWoken);
+
+        // Reinitialize UART to receive more data
+        if (HAL_UART_Receive_IT(&huart2, tof_receivedBuffer, sizeof(tof_receivedBuffer)) != HAL_OK) {
+            Error_Handler();
+        }
+
+        // Yield to a higher-priority task if necessary
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
+}
+
+
+
+void HandleUARTError(HAL_StatusTypeDef status) {
+    switch (status) {
+        case HAL_ERROR:
+            printf("UART Error occurred\n");
+            break;
+        case HAL_BUSY:
+            printf("UART Busy\n");
+            break;
+        case HAL_TIMEOUT:
+            printf("UART Timeout\n");
+            break;
+        default:
+            printf("Unknown UART Error\n");
+            break;
+    }
+}
+
+void ProcessToFData(uint8_t *data, uint16_t length) {
+    // Example: Parse and log received ToF sensor data
+    uint16_t distance = 0;
+
+    if (length >= 2) { // Assuming distance data is 2 bytes
+        distance = (data[0] << 8) | data[1]; // Combine MSB and LSB
+        printf("ToF Distance: %u mm\n", distance);
+    } else {
+        printf("Invalid ToF Data\n");
+    }
+
+    // Additional processing can be added here
+}
+
 
 void createTasks(void) {
     BaseType_t taskCreationStatus;
@@ -123,34 +197,93 @@ void createTasks(void) {
         // Handle error
     }
 
-    taskCreationStatus = xTaskCreate(DisplayUpdateTask, "DisplayUpdate", STACK_SIZE_MINIMAL, NULL, PRIORITY_DISPLAY_UPDATE, NULL);
-    if (taskCreationStatus != pdPASS) {
-        // Handle error
-    }
-
-    taskCreationStatus = xTaskCreate(ToFSensorTask, "ToFSensor", STACK_SIZE_MINIMAL, NULL, PRIORITY_TOF_SENSOR, NULL);
-    if (taskCreationStatus != pdPASS) {
-        // Handle error
-    }
-
     taskCreationStatus = xTaskCreate(CommunicationTask, "Communication", STACK_SIZE_MINIMAL, NULL, PRIORITY_COMMUNICATION, NULL);
     if (taskCreationStatus != pdPASS) {
         // Handle error
     }
+
+    taskCreationStatus = xTaskCreate(DataProcessingTask, "DataProcessing", STACK_SIZE_MINIMAL, NULL, PRIORITY_DATA_PROCESSING, NULL);
+	if (taskCreationStatus != pdPASS) {
+		// Handle error
+	}
+
+	detectionDataQueue = xQueueCreate( 10, sizeof( DetectionData_t ) );
+	if (detectionDataQueue == NULL) {
+		// Handle error
+	}
+
+	uartQueue = xQueueCreate(UART_QUEUE_LENGTH, sizeof(uint8_t));
+	if (uartQueue == NULL) {
+		// Handle error
+	}
+
+	receiveSemaphore = xSemaphoreCreateBinary();
+	if (receiveSemaphore == NULL) {
+		// Handle error
+	}
+}
+
+void HandleInvalidData(uint8_t *data) {
+	// Placeholder: Log invalid data
+
+	if (CDC_Transmit_FS(data, sizeof(data) - 1) != USBD_OK) {
+
+	}
 }
 
 void DataReceptionTask(void *argument) {
+    DetectionData_t detectionData;
+
     for (;;) {
-        // Placeholder: Read data from UART or other communication interface
-        // HAL_UART_Receive(&huart, buffer, buffer_size, HAL_MAX_DELAY);
-        osDelay(10); // Simulate task workload
+        // Wait for the semaphore, signaling new data reception
+        if (xSemaphoreTake(receiveSemaphore, portMAX_DELAY) == pdTRUE) {
+            // Parse the received data
+            if (sscanf((char *)CDC_receivedBuffer, "%hhu,%hhu,%49s",
+                       &detectionData.xPos, &detectionData.yPos, detectionData.label) == 3) {
+                // Send parsed data to the queue
+                if (xQueueSend(detectionDataQueue, &detectionData, portMAX_DELAY) != pdPASS) {
+                    // Handle queue send failure (e.g., log an error)
+                }
+            } else {
+                // Handle invalid data (optional)
+                HandleInvalidData(CDC_receivedBuffer);
+            }
+
+            // Clear the buffer after processing
+            memset(CDC_receivedBuffer, 0, sizeof(CDC_receivedBuffer));
+        }
+
+        // Optional: Delay to prevent CPU hogging
+        osDelay(10);
     }
 }
+
+
+void DataProcessingTask(void *argument) {
+    DetectionData_t receivedData;
+
+    for (;;) {
+        // Wait for data from the queue
+
+        if (xQueueReceive(detectionDataQueue, &receivedData, portMAX_DELAY) == pdPASS) {
+            // Process the received data
+            if (strcmp(receivedData.label, "cyclist") == 0) {
+                HAL_GPIO_TogglePin(GPIOD, LED_CYCLIST);
+            } else if (strcmp(receivedData.label, "motorcyclist") == 0) {
+                HAL_GPIO_TogglePin(GPIOD, LED_MOTORCYCLIST);
+            } else {
+                // Handle unknown label
+                //HandleInvalidLabel(receivedData.label);
+            }
+        }
+    }
+}
+
 
 void WarningLogicTask(void *argument) {
     for (;;) {
         // Placeholder: Analyze position data and make decisions
-        // if (subject_is_close) { trigger_warning(); }
+        // if (subject_is_close && subject_is_detected) { trigger_warning(); }
         osDelay(20); // Simulate task workload
     }
 }
@@ -163,28 +296,13 @@ void AudioSignalTask(void *argument) {
     }
 }
 
-void DisplayUpdateTask(void *argument) {
-    for (;;) {
-        // Placeholder: Update display
-        // update_display(subject_position);
-        osDelay(100); // Simulate task workload
-    }
-}
-
-void ToFSensorTask(void *argument) {
-    for (;;) {
-        // Placeholder: Read data from ToF sensor
-        // HAL_I2C_Mem_Read(&hi2c, TOF_SENSOR_ADDRESS, REGISTER, I2C_MEMADD_SIZE, buffer, buffer_size, HAL_MAX_DELAY);
-        osDelay(30); // Simulate task workload
-    }
-}
-
 void CommunicationTask(void *argument) {
-    //uint8_t rxBuffer[100];
-    uint8_t txBuffer[] = "Acknowledged!";
     for (;;) {
-    	HAL_UART_Transmit(&huart1, txBuffer, sizeof(txBuffer) - 1, HAL_MAX_DELAY);
-        osDelay(10); // Allow task switching
+        // Wait for data from the queue
+        if (xQueueReceive(uartQueue, tof_receivedBuffer, portMAX_DELAY) == pdPASS) {
+            // Process the received data
+            ProcessToFData(tof_receivedBuffer, sizeof(tof_receivedBuffer));
+        }
     }
 }
 /* USER CODE END 0 */
@@ -227,7 +345,6 @@ int main(void)
   MX_SPI1_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
-  MX_USB_OTG_FS_HCD_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -254,8 +371,6 @@ int main(void)
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-
-
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -303,9 +418,9 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 192;
+  RCC_OscInitStruct.PLL.PLLN = 168;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
-  RCC_OscInitStruct.PLL.PLLQ = 8;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -317,10 +432,10 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -513,39 +628,11 @@ static void MX_USART2_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
-
+  if (HAL_UART_Receive_IT(&huart2, tof_receivedBuffer, sizeof(tof_receivedBuffer)) != HAL_OK) {
+          // Handle error
+          Error_Handler();
+      }
   /* USER CODE END USART2_Init 2 */
-
-}
-
-/**
-  * @brief USB_OTG_FS Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USB_OTG_FS_HCD_Init(void)
-{
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
-
-  /* USER CODE END USB_OTG_FS_Init 0 */
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
-
-  /* USER CODE END USB_OTG_FS_Init 1 */
-  hhcd_USB_OTG_FS.Instance = USB_OTG_FS;
-  hhcd_USB_OTG_FS.Init.Host_channels = 8;
-  hhcd_USB_OTG_FS.Init.speed = HCD_SPEED_FULL;
-  hhcd_USB_OTG_FS.Init.dma_enable = DISABLE;
-  hhcd_USB_OTG_FS.Init.phy_itface = HCD_PHY_EMBEDDED;
-  hhcd_USB_OTG_FS.Init.Sof_enable = DISABLE;
-  if (HAL_HCD_Init(&hhcd_USB_OTG_FS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
-
-  /* USER CODE END USB_OTG_FS_Init 2 */
 
 }
 
@@ -650,6 +737,8 @@ static void MX_GPIO_Init(void)
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void *argument)
 {
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
